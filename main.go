@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"flag"
 	"io"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/pcap"
@@ -9,7 +10,17 @@ import (
 )
 
 func main() {
-	handle, err := pcap.OpenOffline("./test.pcap")
+	f:= flag.String("f", "", "file path")
+
+	flag.Parse()
+
+	if *f == "" {
+		log.Fatal("no file path")
+	}
+
+	flag.Parse()
+
+	handle, err := pcap.OpenOffline(*f)
 	if err != nil {
 		log.Fatal(err)
 	}
