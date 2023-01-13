@@ -60,7 +60,6 @@ func main() {
 			if dns.QR {
 				for _, queryLog := range queryLogs {
 					if queryLog.ID == dns.ID {
-						log.Println("match", queryLog.ID)
 						udpLayer := packet.Layer(layers.LayerTypeUDP)
 						if udpLayer != nil {
 							udp := udpLayer.(*layers.UDP)
@@ -136,20 +135,26 @@ func main() {
 			}
 		}
 	}
-	qj, err := json.Marshal(queryLogs)
-	if err != nil {
-		log.Printf("failed to parse json. err: %v", err)
-	}
-	log.Println(qj)
 
 	_, file := filepath.Split(*f)
 	fileName := strings.Split(file, ".")[0]
 
+	qj, err := json.Marshal(queryLogs)
+	if err != nil {
+		log.Printf("failed to parse json. err: %v", err)
+	}
 	fp, err := os.Create("json/" + fileName + "_created_" + time.Now().Format(time.RFC3339) + ".json")
 	if err != nil {
 		log.Fatal(err)
 	}
 	fp.Write(qj)
+
+	csvContent := query.ToCSV(queryLogs)
+	csvf, err := os.Create("csv/" + fileName + "_created_" + time.Now().Format(time.RFC3339) + ".csv")
+	if err != nil {
+		log.Fatal(err)
+	}
+	csvf.WriteString(csvContent.String())
 
 	log.Println("finish")
 }

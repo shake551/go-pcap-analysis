@@ -1,9 +1,12 @@
 package query
 
 import (
+	"bytes"
+	"fmt"
 	"github.com/likexian/gokit/assert"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -97,6 +100,37 @@ func ParseWhois(whoisRaw string) map[string]string {
 	}
 
 	return res
+}
+
+func ToCSV(queryLogs []*DNSQuery) bytes.Buffer {
+	var csvContent bytes.Buffer
+	for _, q := range queryLogs {
+		csvContent.WriteString(q.Time.Format(time.RFC3339) + "\t")
+
+		csvContent.WriteString(q.SrcIP.IP.String() + "\t" + strconv.FormatInt(q.SrcIP.Port, 10) + "\t")
+
+		csvContent.WriteString(fmt.Sprintf("%v\t", q.SrcIP.Domain))
+		csvContent.WriteString(q.SrcIP.Organization + "\t")
+		csvContent.WriteString(q.SrcIP.Country + "\t")
+		csvContent.WriteString(q.SrcIP.AbuseEmail + "\t")
+
+		csvContent.WriteString(q.DstIP.IP.String() + "\t" + strconv.FormatInt(q.DstIP.Port, 10) + "\t")
+
+		csvContent.WriteString(q.Question.Name + "\t")
+		csvContent.WriteString(q.Question.Type + "\t")
+		csvContent.WriteString(q.Question.Class + "\t")
+		csvContent.WriteString(strconv.Itoa(int(q.Question.Packet.Checksum)) + "\t")
+		csvContent.WriteString(strconv.Itoa(int(q.Question.Packet.Length)) + "\t")
+		csvContent.WriteString(strconv.Itoa(int(q.Question.Packet.ID)) + "\t")
+
+		csvContent.WriteString(strconv.Itoa(int(q.Response.Packet.Checksum)) + "\t")
+		csvContent.WriteString(strconv.Itoa(int(q.Response.Packet.Length)) + "\t")
+		csvContent.WriteString(strconv.Itoa(int(q.Response.Packet.ID)) + "\t")
+
+		csvContent.WriteString("\n")
+	}
+
+	return csvContent
 }
 
 func isContain(target string, array []string) bool {
