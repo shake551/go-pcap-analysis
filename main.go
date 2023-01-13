@@ -6,15 +6,50 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/k0kubun/pp/v3"
+	"github.com/likexian/gokit/assert"
 	"github.com/likexian/whois"
 	"io"
 	"log"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
+
+type DNSQuery struct {
+	ID       uint16
+	Time     time.Time
+	SrcIP    IP
+	DstIP    IP
+	Question Question
+	Response Response
+}
+
+type IP struct {
+	IP           net.IP
+	Port         int64
+	Domain       []string
+	Organization string
+	Country      string
+	AbuseEmail   string
+}
+
+type Packet struct {
+	ID       int64
+	Checksum uint16
+	Length   uint16
+}
+
+type Question struct {
+	Packet Packet
+	Name   string
+	Type   string
+	Class  string
+}
+
+type Response struct {
+	Packet Packet
+}
 
 func main() {
 	f := flag.String("f", "", "file path")
@@ -34,20 +69,22 @@ func main() {
 	}
 	defer handle.Close()
 
-	_, file := filepath.Split(*f)
-	fileName := strings.Split(file, ".")[0]
+	//_, file := filepath.Split(*f)
+	//fileName := strings.Split(file, ".")[0]
 
-	fp, err := os.Create("csv/" + fileName + "_created_" + time.Now().Format(time.RFC3339) + ".csv")
-	if err != nil {
-		log.Fatal(err)
-	}
+	//fp, err := os.Create("csv/" + fileName + "_created_" + time.Now().Format(time.RFC3339) + ".csv")
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-	i := 0
+	i := int64(0)
+	var queryLogs []*DNSQuery
 	for {
 		i++
 
 		packet, err := packetSource.NextPacket()
+
 		if err == io.EOF {
 			break
 		} else if err != nil {
@@ -55,31 +92,46 @@ func main() {
 			continue
 		}
 
-		pickUpData := packet.Metadata().Timestamp.Format(time.RFC3339) + "\t"
-
 		ipLayer := packet.Layer(layers.LayerTypeIPv4)
 		ip := ipLayer.(*layers.IPv4)
-
-		if *fromOtherIP != "" {
-			if ip.SrcIP.String() == *fromOtherIP {
-				continue
-			}
-		}
 
 		dnsLayer := packet.Layer(layers.LayerTypeDNS)
 		if dnsLayer != nil {
 			dns := dnsLayer.(*layers.DNS)
-			if !dns.QR {
+			if dns.QR {
+				for _, queryLog := range queryLogs {
+					if queryLog.ID == dns.ID {
+						log.Println("match", queryLog.ID)
+						udpLayer := packet.Layer(layers.LayerTypeUDP)
+						if udpLayer != nil {
+							udp := udpLayer.(*layers.UDP)
+							queryLog.Response = Response{
+								Packet: Packet{
+									ID:       i,
+									Checksum: udp.Checksum,
+									Length:   udp.Length,
+								},
+							}
+						}
+						break
+					}
+				}
+			} else {
+				if *fromOtherIP != "" {
+					if ip.SrcIP.String() == *fromOtherIP {
+						continue
+					}
+				}
+				query := DNSQuery{
+					ID:   dns.ID,
+					Time: packet.Metadata().Timestamp,
+				}
+
 				udpLayer := packet.Layer(layers.LayerTypeUDP)
 				if udpLayer != nil {
 					udp := udpLayer.(*layers.UDP)
-					pickUpData += ip.SrcIP.String() + "\t" + udp.SrcPort.String() + "\t"
-					addr, err := net.LookupAddr(ip.SrcIP.String())
-					if err != nil {
-						pickUpData += fmt.Sprintf("Lookup error: %v\t", err)
-					} else {
-						pickUpData += fmt.Sprintf("%v\t", addr)
-					}
+
+					addr, _ := net.LookupAddr(ip.SrcIP.String())
 
 					whoisRaw, err := whois.Whois(ip.SrcIP.String())
 					if err != nil {
@@ -88,40 +140,108 @@ func main() {
 
 					result := ParseWhois(whoisRaw)
 
-					org, ok := result["Organization"]
-					if ok {
-						pickUpData += org
+					org, _ := result["Organization"]
+					country, _ := result["Country"]
+					email, _ := result["OrgAbuseEmail"]
+
+					query.SrcIP = IP{
+						IP:           ip.SrcIP,
+						Port:         int64(udp.SrcPort),
+						Domain:       addr,
+						Organization: org,
+						Country:      country,
+						AbuseEmail:   email,
 					}
-					pickUpData += "\t"
 
-					country, ok := result["Country"]
-					if ok {
-						pickUpData += country
+					query.DstIP = IP{
+						IP:   ip.DstIP,
+						Port: int64(udp.DstPort),
 					}
-					pickUpData += "\t"
 
-					email, ok := result["OrgAbuseEmail"]
-					if ok {
-						pickUpData += email
+					packetInfo := Packet{
+						ID:       i,
+						Checksum: udp.Checksum,
+						Length:   udp.Length,
 					}
-					pickUpData += "\t"
 
-					pickUpData += ip.DstIP.String() + "\t" + udp.DstPort.String() + "\t"
-
-					if len(dns.Questions) < 1 {
-						pickUpData += "\t\t\t\t\t"
-					} else {
-						pickUpData += fmt.Sprintf("%s\t%s\t%s\t", string(dns.Questions[0].Name), dns.Questions[0].Type, dns.Questions[0].Class)
-						pickUpData += fmt.Sprintf("%d\t", udp.Checksum)
-						pickUpData += fmt.Sprintf("%d\t", udp.Length)
+					if len(dns.Questions) >= 1 {
+						query.Question = Question{
+							Packet: packetInfo,
+							Name:   string(dns.Questions[0].Name),
+							Type:   fmt.Sprintf("%v", dns.Questions[0].Type),
+							Class:  fmt.Sprintf("%v", dns.Questions[0].Class),
+						}
 					}
-					pickUpData += fmt.Sprintf("%v\t", i)
-
-					fp.WriteString(pickUpData)
-					fp.WriteString(fmt.Sprintln())
 				}
+				queryLogs = append([]*DNSQuery{&query}, queryLogs...)
 			}
 		}
 	}
+	pp.Print(queryLogs)
 	log.Println("finish")
+}
+
+func ParseWhois(whoisRaw string) map[string]string {
+	pickUpName := [...]string{
+		"Organization",
+		"Country",
+		"OrgAbuseEmail",
+	}
+
+	res := map[string]string{}
+
+	whoisLines := strings.Split(whoisRaw, "\n")
+	for i := 0; i < len(whoisLines); i++ {
+		line := strings.TrimSpace(whoisLines[i])
+		if len(line) < 5 || !strings.Contains(line, ":") {
+			continue
+		}
+
+		fChar := line[:1]
+		if assert.IsContains([]string{"-", "*", "%", ">", ";"}, fChar) {
+			continue
+		}
+
+		if line[len(line)-1:] == ":" {
+			i++
+			for ; i < len(whoisLines); i++ {
+				thisLine := strings.TrimSpace(whoisLines[i])
+				if strings.Contains(thisLine, ":") {
+					break
+				}
+				line += thisLine + ","
+			}
+			line = strings.Trim(line, ",")
+			i--
+		}
+
+		lines := strings.SplitN(line, ":", 2)
+		if len(lines) < 2 {
+			log.Println("there are no lines, ", lines)
+			continue
+		}
+
+		name := strings.TrimSpace(lines[0])
+		value := strings.TrimSpace(lines[1])
+		value = strings.TrimSpace(strings.Trim(value, ":"))
+
+		if value == "" {
+			continue
+		}
+
+		if isContain(name, pickUpName[:]) {
+			res[name] = value
+		}
+	}
+
+	return res
+}
+
+func isContain(target string, array []string) bool {
+	for _, ele := range array {
+		if ele == target {
+			return true
+		}
+	}
+	return false
 }
