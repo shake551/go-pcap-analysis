@@ -1,4 +1,4 @@
-module main
+module github.com/shake551/go-pcap-analysis
 
 go 1.18
 
