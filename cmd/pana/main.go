@@ -7,49 +7,12 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/k0kubun/pp/v3"
-	"github.com/likexian/gokit/assert"
 	"github.com/likexian/whois"
+	"github.com/shake551/go-pcap-analysis"
 	"io"
 	"log"
 	"net"
-	"strings"
-	"time"
 )
-
-type DNSQuery struct {
-	ID       uint16
-	Time     time.Time
-	SrcIP    IP
-	DstIP    IP
-	Question Question
-	Response Response
-}
-
-type IP struct {
-	IP           net.IP
-	Port         int64
-	Domain       []string
-	Organization string
-	Country      string
-	AbuseEmail   string
-}
-
-type Packet struct {
-	ID       int64
-	Checksum uint16
-	Length   uint16
-}
-
-type Question struct {
-	Packet Packet
-	Name   string
-	Type   string
-	Class  string
-}
-
-type Response struct {
-	Packet Packet
-}
 
 func main() {
 	f := flag.String("f", "", "file path")
@@ -79,7 +42,7 @@ func main() {
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	i := int64(0)
-	var queryLogs []*DNSQuery
+	var queryLogs []*query.DNSQuery
 	for {
 		i++
 
@@ -105,8 +68,8 @@ func main() {
 						udpLayer := packet.Layer(layers.LayerTypeUDP)
 						if udpLayer != nil {
 							udp := udpLayer.(*layers.UDP)
-							queryLog.Response = Response{
-								Packet: Packet{
+							queryLog.Response = query.Response{
+								Packet: query.Packet{
 									ID:       i,
 									Checksum: udp.Checksum,
 									Length:   udp.Length,
@@ -122,7 +85,7 @@ func main() {
 						continue
 					}
 				}
-				query := DNSQuery{
+				q := query.DNSQuery{
 					ID:   dns.ID,
 					Time: packet.Metadata().Timestamp,
 				}
@@ -138,13 +101,13 @@ func main() {
 						log.Println(err, ip.SrcIP, i)
 					}
 
-					result := ParseWhois(whoisRaw)
+					result := query.ParseWhois(whoisRaw)
 
 					org, _ := result["Organization"]
 					country, _ := result["Country"]
 					email, _ := result["OrgAbuseEmail"]
 
-					query.SrcIP = IP{
+					q.SrcIP = query.IP{
 						IP:           ip.SrcIP,
 						Port:         int64(udp.SrcPort),
 						Domain:       addr,
@@ -153,19 +116,19 @@ func main() {
 						AbuseEmail:   email,
 					}
 
-					query.DstIP = IP{
+					q.DstIP = query.IP{
 						IP:   ip.DstIP,
 						Port: int64(udp.DstPort),
 					}
 
-					packetInfo := Packet{
+					packetInfo := query.Packet{
 						ID:       i,
 						Checksum: udp.Checksum,
 						Length:   udp.Length,
 					}
 
 					if len(dns.Questions) >= 1 {
-						query.Question = Question{
+						q.Question = query.Question{
 							Packet: packetInfo,
 							Name:   string(dns.Questions[0].Name),
 							Type:   fmt.Sprintf("%v", dns.Questions[0].Type),
@@ -173,75 +136,10 @@ func main() {
 						}
 					}
 				}
-				queryLogs = append([]*DNSQuery{&query}, queryLogs...)
+				queryLogs = append([]*query.DNSQuery{&q}, queryLogs...)
 			}
 		}
 	}
 	pp.Print(queryLogs)
 	log.Println("finish")
-}
-
-func ParseWhois(whoisRaw string) map[string]string {
-	pickUpName := [...]string{
-		"Organization",
-		"Country",
-		"OrgAbuseEmail",
-	}
-
-	res := map[string]string{}
-
-	whoisLines := strings.Split(whoisRaw, "\n")
-	for i := 0; i < len(whoisLines); i++ {
-		line := strings.TrimSpace(whoisLines[i])
-		if len(line) < 5 || !strings.Contains(line, ":") {
-			continue
-		}
-
-		fChar := line[:1]
-		if assert.IsContains([]string{"-", "*", "%", ">", ";"}, fChar) {
-			continue
-		}
-
-		if line[len(line)-1:] == ":" {
-			i++
-			for ; i < len(whoisLines); i++ {
-				thisLine := strings.TrimSpace(whoisLines[i])
-				if strings.Contains(thisLine, ":") {
-					break
-				}
-				line += thisLine + ","
-			}
-			line = strings.Trim(line, ",")
-			i--
-		}
-
-		lines := strings.SplitN(line, ":", 2)
-		if len(lines) < 2 {
-			log.Println("there are no lines, ", lines)
-			continue
-		}
-
-		name := strings.TrimSpace(lines[0])
-		value := strings.TrimSpace(lines[1])
-		value = strings.TrimSpace(strings.Trim(value, ":"))
-
-		if value == "" {
-			continue
-		}
-
-		if isContain(name, pickUpName[:]) {
-			res[name] = value
-		}
-	}
-
-	return res
-}
-
-func isContain(target string, array []string) bool {
-	for _, ele := range array {
-		if ele == target {
-			return true
-		}
-	}
-	return false
 }
