@@ -1,17 +1,21 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
-	"github.com/k0kubun/pp/v3"
 	"github.com/likexian/whois"
 	"github.com/shake551/go-pcap-analysis"
 	"io"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 func main() {
@@ -31,14 +35,6 @@ func main() {
 		log.Fatal(err)
 	}
 	defer handle.Close()
-
-	//_, file := filepath.Split(*f)
-	//fileName := strings.Split(file, ".")[0]
-
-	//fp, err := os.Create("csv/" + fileName + "_created_" + time.Now().Format(time.RFC3339) + ".csv")
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	i := int64(0)
@@ -140,6 +136,20 @@ func main() {
 			}
 		}
 	}
-	pp.Print(queryLogs)
+	qj, err := json.Marshal(queryLogs)
+	if err != nil {
+		log.Printf("failed to parse json. err: %v", err)
+	}
+	log.Println(qj)
+
+	_, file := filepath.Split(*f)
+	fileName := strings.Split(file, ".")[0]
+
+	fp, err := os.Create("json/" + fileName + "_created_" + time.Now().Format(time.RFC3339) + ".json")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fp.Write(qj)
+
 	log.Println("finish")
 }

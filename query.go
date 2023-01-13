@@ -9,38 +9,38 @@ import (
 )
 
 type DNSQuery struct {
-	ID       uint16
-	Time     time.Time
-	SrcIP    IP
-	DstIP    IP
-	Question Question
-	Response Response
+	ID       uint16    `json:"id"`
+	Time     time.Time `json:"time"`
+	SrcIP    IP        `json:"src_ip"`
+	DstIP    IP        `json:"dst_ip"`
+	Question Question  `json:"question"`
+	Response Response  `json:"response"`
 }
 
 type IP struct {
-	IP           net.IP
-	Port         int64
-	Domain       []string
-	Organization string
-	Country      string
-	AbuseEmail   string
+	IP           net.IP   `json:"ip"`
+	Port         int64    `json:"port"`
+	Domain       []string `json:"domain"`
+	Organization string   `json:"organization"`
+	Country      string   `json:"country"`
+	AbuseEmail   string   `json:"abuse_email"`
 }
 
 type Packet struct {
-	ID       int64
-	Checksum uint16
-	Length   uint16
+	ID       int64  `json:"id"`
+	Checksum uint16 `json:"checksum"`
+	Length   uint16 `json:"length"`
 }
 
 type Question struct {
-	Packet Packet
-	Name   string
-	Type   string
-	Class  string
+	Packet Packet `json:"packet"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Class  string `json:"class"`
 }
 
 type Response struct {
-	Packet Packet
+	Packet Packet `json:"packet"`
 }
 
 func ParseWhois(whoisRaw string) map[string]string {
