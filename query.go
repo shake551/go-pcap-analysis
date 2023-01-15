@@ -3,9 +3,15 @@ package query
 import (
 	"bytes"
 	"fmt"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
 	"github.com/likexian/gokit/assert"
+	"github.com/likexian/whois"
+	"io"
 	"log"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +50,116 @@ type Question struct {
 
 type Response struct {
 	Packet Packet `json:"packet"`
+}
+
+func GetDNSQueryLogs(filePath string, fromOtherIP string) []*DNSQuery {
+	handle, err := pcap.OpenOffline(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer handle.Close()
+
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	i := int64(0)
+	var queryLogs []*DNSQuery
+	for {
+		i++
+
+		packet, err := packetSource.NextPacket()
+
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			log.Println("Error: ", err)
+			continue
+		}
+
+		ipLayer := packet.Layer(layers.LayerTypeIPv4)
+		ip := ipLayer.(*layers.IPv4)
+
+		dnsLayer := packet.Layer(layers.LayerTypeDNS)
+		if dnsLayer != nil {
+			dns := dnsLayer.(*layers.DNS)
+			if dns.QR {
+				for _, queryLog := range queryLogs {
+					if queryLog.ID == dns.ID {
+						udpLayer := packet.Layer(layers.LayerTypeUDP)
+						if udpLayer != nil {
+							udp := udpLayer.(*layers.UDP)
+							queryLog.Response = Response{
+								Packet: Packet{
+									ID:       i,
+									Checksum: udp.Checksum,
+									Length:   udp.Length,
+								},
+							}
+						}
+						break
+					}
+				}
+			} else {
+				if fromOtherIP != "" {
+					if ip.SrcIP.String() == fromOtherIP {
+						continue
+					}
+				}
+				q := DNSQuery{
+					ID:   dns.ID,
+					Time: packet.Metadata().Timestamp,
+				}
+
+				udpLayer := packet.Layer(layers.LayerTypeUDP)
+				if udpLayer != nil {
+					udp := udpLayer.(*layers.UDP)
+
+					addr, _ := net.LookupAddr(ip.SrcIP.String())
+
+					whoisRaw, err := whois.Whois(ip.SrcIP.String())
+					if err != nil {
+						log.Println(err, ip.SrcIP, i)
+					}
+
+					result := ParseWhois(whoisRaw)
+
+					org, _ := result["Organization"]
+					country, _ := result["Country"]
+					email, _ := result["OrgAbuseEmail"]
+
+					q.SrcIP = IP{
+						IP:           ip.SrcIP,
+						Port:         int64(udp.SrcPort),
+						Domain:       addr,
+						Organization: org,
+						Country:      country,
+						AbuseEmail:   email,
+					}
+
+					q.DstIP = IP{
+						IP:   ip.DstIP,
+						Port: int64(udp.DstPort),
+					}
+
+					packetInfo := Packet{
+						ID:       i,
+						Checksum: udp.Checksum,
+						Length:   udp.Length,
+					}
+
+					if len(dns.Questions) >= 1 {
+						q.Question = Question{
+							Packet: packetInfo,
+							Name:   string(dns.Questions[0].Name),
+							Type:   fmt.Sprintf("%v", dns.Questions[0].Type),
+							Class:  fmt.Sprintf("%v", dns.Questions[0].Class),
+						}
+					}
+				}
+				queryLogs = append([]*DNSQuery{&q}, queryLogs...)
+			}
+		}
+	}
+	sort.Slice(queryLogs, func(i, j int) bool { return queryLogs[i].Time.Before(queryLogs[j].Time) })
+	return queryLogs
 }
 
 func ParseWhois(whoisRaw string) map[string]string {
