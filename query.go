@@ -3,11 +3,6 @@ package query
 import (
 	"bytes"
 	"fmt"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-	"github.com/likexian/gokit/assert"
-	"github.com/likexian/whois"
 	"io"
 	"log"
 	"net"
@@ -15,6 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
+	"github.com/likexian/gokit/assert"
+	"github.com/likexian/whois"
 )
 
 type DNSQuery struct {
@@ -62,6 +63,8 @@ func GetDNSQueryLogs(filePath string, fromOtherIP string) []*DNSQuery {
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	i := int64(0)
 	var queryLogs []*DNSQuery
+
+	lookedIPMap := map[string]IP{}
 	for {
 		i++
 
@@ -111,27 +114,35 @@ func GetDNSQueryLogs(filePath string, fromOtherIP string) []*DNSQuery {
 				udpLayer := packet.Layer(layers.LayerTypeUDP)
 				if udpLayer != nil {
 					udp := udpLayer.(*layers.UDP)
+					lookedIP, ok := lookedIPMap[ip.SrcIP.String()]
+					if ok {
+						q.SrcIP = lookedIP
+					} else {
+						addr, _ := net.LookupAddr(ip.SrcIP.String())
 
-					addr, _ := net.LookupAddr(ip.SrcIP.String())
+						whoisRaw, err := whois.Whois(ip.SrcIP.String())
+						if err != nil {
+							log.Println(err, ip.SrcIP, i)
+						}
 
-					whoisRaw, err := whois.Whois(ip.SrcIP.String())
-					if err != nil {
-						log.Println(err, ip.SrcIP, i)
-					}
+						result := ParseWhois(whoisRaw)
 
-					result := ParseWhois(whoisRaw)
+						org, _ := result["Organization"]
+						country, _ := result["Country"]
+						email, _ := result["OrgAbuseEmail"]
 
-					org, _ := result["Organization"]
-					country, _ := result["Country"]
-					email, _ := result["OrgAbuseEmail"]
+						lookedIP = IP{
+							IP:           ip.SrcIP,
+							Port:         int64(udp.SrcPort),
+							Domain:       addr,
+							Organization: org,
+							Country:      country,
+							AbuseEmail:   email,
+						}
 
-					q.SrcIP = IP{
-						IP:           ip.SrcIP,
-						Port:         int64(udp.SrcPort),
-						Domain:       addr,
-						Organization: org,
-						Country:      country,
-						AbuseEmail:   email,
+						q.SrcIP = lookedIP
+
+						lookedIPMap[ip.SrcIP.String()] = lookedIP
 					}
 
 					q.DstIP = IP{
